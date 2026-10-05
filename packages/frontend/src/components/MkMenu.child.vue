@@ -5,21 +5,30 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 <template>
 <div ref="el" :class="$style.root">
-	<MkMenu :items="items" :align="align" :width="width" :asDrawer="false" @close="onChildClosed"/>
+	<MkMenu
+		:items="items"
+		:align="align"
+		:width="width"
+		:asDrawer="false"
+		:debugDisablePredictionCone="debugDisablePredictionCone"
+		:debugShowPredictionCone="debugShowPredictionCone"
+		@close="onChildClosed"
+	/>
 </div>
 </template>
 
 <script lang="ts" setup>
-import { nextTick, onMounted, onUnmounted, shallowRef, watch } from 'vue';
+import { nextTick, onMounted, onUnmounted, provide, useTemplateRef, watch } from 'vue';
 import MkMenu from './MkMenu.vue';
-import { MenuItem } from '@/types/menu.js';
+import type { MenuItem } from '@/types/menu.js';
 
 const props = defineProps<{
 	items: MenuItem[];
-	targetElement: HTMLElement;
+	anchorElement: HTMLElement;
 	rootElement: HTMLElement;
 	width?: number;
-	viaKeyboard?: boolean;
+	debugDisablePredictionCone?: boolean;
+	debugShowPredictionCone?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -27,7 +36,9 @@ const emit = defineEmits<{
 	(ev: 'actioned'): void;
 }>();
 
-const el = shallowRef<HTMLElement>();
+provide('isNestingMenu', true);
+
+const el = useTemplateRef('el');
 const align = 'left';
 
 const SCROLLBAR_THICKNESS = 16;
@@ -35,10 +46,10 @@ const SCROLLBAR_THICKNESS = 16;
 function setPosition() {
 	if (el.value == null) return;
 	const rootRect = props.rootElement.getBoundingClientRect();
-	const parentRect = props.targetElement.getBoundingClientRect();
+	const parentRect = props.anchorElement.getBoundingClientRect();
 	const myRect = el.value.getBoundingClientRect();
 
-	let left = props.targetElement.offsetWidth;
+	let left = props.anchorElement.offsetWidth;
 	let top = (parentRect.top - rootRect.top) - 8;
 	if (rootRect.left + left + myRect.width >= (window.innerWidth - SCROLLBAR_THICKNESS)) {
 		left = -myRect.width;
@@ -58,7 +69,7 @@ function onChildClosed(actioned?: boolean) {
 	}
 }
 
-watch(() => props.targetElement, () => {
+watch(() => props.anchorElement, () => {
 	setPosition();
 });
 
@@ -79,6 +90,7 @@ onUnmounted(() => {
 });
 
 defineExpose({
+	rootElement: el,
 	checkHit: (ev: MouseEvent) => {
 		return (ev.target === el.value || el.value?.contains(ev.target as Node));
 	},

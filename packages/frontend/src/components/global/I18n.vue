@@ -1,10 +1,15 @@
+<!--
+SPDX-FileCopyrightText: syuilo and misskey-project
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 <template>
 <render/>
 </template>
 
 <script setup lang="ts" generic="T extends string | ParameterizedString">
 import { computed, h } from 'vue';
-import type { ParameterizedString } from '../../../../../locales/index.js';
+import type { ParameterizedString } from 'i18n';
 
 const props = withDefaults(defineProps<{
 	src: T;
@@ -20,7 +25,7 @@ const slots = defineSlots<T extends ParameterizedString<infer R> ? { [K in R]: (
 const parsed = computed(() => {
 	let str = props.src as string;
 	const value: (string | { arg: string; })[] = [];
-	for (;;) {
+	for (; ;) {
 		const nextBracketOpen = str.indexOf('{');
 		const nextBracketClose = str.indexOf('}');
 
@@ -41,6 +46,6 @@ const parsed = computed(() => {
 });
 
 const render = () => {
-	return h(props.tag, parsed.value.map(x => typeof x === 'string' ? (props.textTag ? h(props.textTag, x) : x) : slots[x.arg]()));
+	return h(props.tag, parsed.value.map(x => typeof x === 'string' ? (props.textTag ? h(props.textTag, x) : x) : (slots as any)[x.arg]()));
 };
 </script>

@@ -4,7 +4,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 -->
 
 <template>
-<MkSpacer :contentMax="500">
+<div class="_spacer" style="--MI_SPACER-w: 500px;">
 	<div :class="$style.root" class="_gaps">
 		<div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
 			<span>({{ i18n.ts._reversi.black }})</span>
@@ -34,7 +34,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 			</div>
 		</div>
 
-		<div :class="$style.board">
+		<div class="_woodenFrame">
 			<div :class="$style.boardInner">
 				<div v-if="showBoardLabels" :class="$style.labelsX">
 					<span v-for="i in game.map[0].length" :key="i" :class="$style.labelsXLabel">{{ String.fromCharCode(64 + i) }}</span>
@@ -124,8 +124,8 @@ SPDX-License-Identifier: AGPL-3.0-only
 		<MkFolder>
 			<template #label>{{ i18n.ts.options }}</template>
 			<div class="_gaps_s" style="text-align: left;">
-				<MkSwitch v-model="showBoardLabels">Show labels</MkSwitch>
-				<MkSwitch v-model="useAvatarAsStone">useAvatarAsStone</MkSwitch>
+				<MkSwitch v-model="showBoardLabels">{{ i18n.ts._reversi.showBoardLabels }}</MkSwitch>
+				<MkSwitch v-model="useAvatarAsStone">{{ i18n.ts._reversi.useAvatarAsStone }}</MkSwitch>
 			</div>
 		</MkFolder>
 
@@ -138,37 +138,37 @@ SPDX-License-Identifier: AGPL-3.0-only
 			<img src="/client-assets/reversi/logo.png" style="display: block; max-width: 100%; width: 200px; margin: auto;"/>
 		</MkA>
 	</div>
-</MkSpacer>
+</div>
 </template>
 
 <script lang="ts" setup>
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, shallowRef, triggerRef, watch } from 'vue';
 import * as Misskey from 'misskey-js';
 import * as Reversi from 'misskey-reversi';
+import { useInterval } from '@@/js/use-interval.js';
+import { url } from '@@/js/config.js';
 import MkButton from '@/components/MkButton.vue';
 import MkFolder from '@/components/MkFolder.vue';
 import MkSwitch from '@/components/MkSwitch.vue';
-import { deepClone } from '@/scripts/clone.js';
-import { useInterval } from '@/scripts/use-interval.js';
-import { signinRequired } from '@/account.js';
+import { deepClone } from '@/utility/clone.js';
+import { $i } from '@/i.js';
 import { i18n } from '@/i18n.js';
-import { misskeyApi } from '@/scripts/misskey-api.js';
+import { misskeyApi } from '@/utility/misskey-api.js';
 import { userPage } from '@/filters/user.js';
-import * as sound from '@/scripts/sound.js';
+import * as sound from '@/utility/sound.js';
 import * as os from '@/os.js';
-import { confetti } from '@/scripts/confetti.js';
-
-const $i = signinRequired();
+import { confetti } from '@/utility/confetti.js';
+import { genId } from '@/utility/id.js';
 
 const props = defineProps<{
 	game: Misskey.entities.ReversiGameDetailed;
-	connection?: Misskey.ChannelConnection<Misskey.Channels['reversiGame']> | null;
+	connection?: Misskey.IChannelConnection<Misskey.Channels['reversiGame']> | null;
 }>();
 
 const showBoardLabels = ref<boolean>(false);
 const useAvatarAsStone = ref<boolean>(true);
 const autoplaying = ref<boolean>(false);
-// eslint-disable-next-line vue/no-setup-props-destructure
+// eslint-disable-next-line vue/no-setup-props-reactivity-loss
 const game = ref<Misskey.entities.ReversiGameDetailed & { logs: Reversi.Serializer.SerializedLog[] }>(deepClone(props.game));
 const logPos = ref<number>(game.value.logs.length);
 const engine = shallowRef<Reversi.Game>(Reversi.Serializer.restoreGame({
@@ -180,13 +180,13 @@ const engine = shallowRef<Reversi.Game>(Reversi.Serializer.restoreGame({
 }));
 
 const iAmPlayer = computed(() => {
-	return game.value.user1Id === $i.id || game.value.user2Id === $i.id;
+	return game.value.user1Id === $i?.id || game.value.user2Id === $i?.id;
 });
 
 const myColor = computed(() => {
 	if (!iAmPlayer.value) return null;
-	if (game.value.user1Id === $i.id && game.value.black === 1) return true;
-	if (game.value.user2Id === $i.id && game.value.black === 2) return true;
+	if (game.value.user1Id === $i?.id && game.value.black === 1) return true;
+	if (game.value.user2Id === $i?.id && game.value.black === 2) return true;
 	return false;
 });
 
@@ -217,7 +217,7 @@ const isMyTurn = computed(() => {
 	if (!iAmPlayer.value) return false;
 	const u = turnUser.value;
 	if (u == null) return false;
-	return u.id === $i.id;
+	return u.id === $i?.id;
 });
 
 const cellsStyle = computed(() => {
@@ -248,7 +248,7 @@ if (game.value.isStarted && !game.value.isEnded) {
 			crc32: crc32.toString(),
 		}).then((res) => {
 			if (res.desynced) {
-				console.log('resynced');
+				if (_DEV_) console.log('resynced');
 				restoreGame(res.game!);
 			}
 		});
@@ -272,7 +272,7 @@ function putStone(pos: number) {
 		playbackRate: 1,
 	});
 
-	const id = Math.random().toString(36).slice(2);
+	const id = genId();
 	props.connection!.send('putStone', {
 		pos: pos,
 		id,
@@ -300,13 +300,17 @@ if (!props.game.isEnded) {
 
 		if (iAmPlayer.value) {
 			if ((isMyTurn.value && myTurnTimerRmain.value === 0) || (!isMyTurn.value && opTurnTimerRmain.value === 0)) {
-			props.connection!.send('claimTimeIsUp', {});
+				props.connection!.send('claimTimeIsUp', {});
 			}
 		}
-	}, TIMER_INTERVAL_SEC * 1000, { immediate: false, afterMounted: true });
+	}, TIMER_INTERVAL_SEC * 1000, {
+		immediate: false,
+		afterMounted: true,
+		keepRunningWhenHidden: true, // 対局の制限時間管理のため、バックグラウンドでも止めない
+	});
 }
 
-async function onStreamLog(log) {
+async function onStreamLog(log: Reversi.Serializer.Log & { id: string | null }) {
 	game.value.logs = Reversi.Serializer.serializeLogs([
 		...Reversi.Serializer.deserializeLogs(game.value.logs),
 		log,
@@ -346,10 +350,13 @@ async function onStreamLog(log) {
 	}
 }
 
-function onStreamEnded(x) {
+function onStreamEnded(x: {
+	winnerId: Misskey.entities.User['id'] | null;
+	game: Misskey.entities.ReversiGameDetailed;
+}) {
 	game.value = deepClone(x.game);
 
-	if (game.value.winnerId === $i.id) {
+	if (game.value.winnerId === $i?.id) {
 		confetti({
 			duration: 1000 * 3,
 		});
@@ -382,7 +389,7 @@ function checkEnd() {
 	}
 }
 
-function restoreGame(_game) {
+function restoreGame(_game: Misskey.entities.ReversiGameDetailed) {
 	game.value = deepClone(_game);
 
 	engine.value = Reversi.Serializer.restoreGame({
@@ -423,7 +430,7 @@ function autoplay() {
 		const tick = () => {
 			const log = logs[i];
 			const time = log.time - previousLog.time;
-			setTimeout(() => {
+			window.setTimeout(() => {
 				i++;
 				logPos.value++;
 				previousLog = log;
@@ -442,7 +449,7 @@ function autoplay() {
 
 function share() {
 	os.post({
-		initialText: `#MisskeyReversi ${location.href}`,
+		initialText: `#MisskeyReversi\n${url}/reversi/g/${game.value.id}`,
 		instant: true,
 	});
 }
@@ -500,21 +507,10 @@ $gap: 4px;
 	text-align: center;
 }
 
-.board {
-	width: 100%;
-	box-sizing: border-box;
-	margin: 0 auto;
-
-	padding: 7px;
-	background: #8C4F26;
-	box-shadow: 0 6px 16px #0007, 0 0 1px 1px #693410, inset 0 0 2px 1px #ce8a5c;
-	border-radius: 12px;
-}
-
 .boardInner {
 	padding: 32px;
 
-	background: var(--panel);
+	background: var(--MI_THEME-panel);
 	box-shadow: 0 0 2px 1px #ce8a5c, inset 0 0 1px 1px #693410;
 	border-radius: 8px;
 }
@@ -584,34 +580,34 @@ $gap: 4px;
 	transition: border 0.25s ease, opacity 0.25s ease;
 
 	&.boardCell_empty {
-		border: solid 2px var(--divider);
+		border: solid 2px var(--MI_THEME-divider);
 	}
 
 	&.boardCell_empty.boardCell_can {
-		border-color: var(--accent);
+		border-color: var(--MI_THEME-accent);
 		opacity: 0.5;
 	}
 
 	&.boardCell_empty.boardCell_myTurn {
-		border-color: var(--divider);
+		border-color: var(--MI_THEME-divider);
 		opacity: 1;
 
 		&.boardCell_can {
-			border-color: var(--accent);
+			border-color: var(--MI_THEME-accent);
 			cursor: pointer;
 
 			&:hover {
-				background: var(--accent);
+				background: var(--MI_THEME-accent);
 			}
 		}
 	}
 
 	&.boardCell_prev {
-		box-shadow: 0 0 0 4px var(--accent);
+		box-shadow: 0 0 0 4px var(--MI_THEME-accent);
 	}
 
 	&.boardCell_isEnded {
-		border-color: var(--divider);
+		border-color: var(--MI_THEME-divider);
 	}
 
 	&.boardCell_none {

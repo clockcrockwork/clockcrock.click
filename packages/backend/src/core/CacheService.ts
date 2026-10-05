@@ -56,10 +56,10 @@ export class CacheService implements OnApplicationShutdown {
 	) {
 		//this.onMessage = this.onMessage.bind(this);
 
-		this.userByIdCache = new MemoryKVCache<MiUser>(Infinity);
-		this.localUserByNativeTokenCache = new MemoryKVCache<MiLocalUser | null>(Infinity);
-		this.localUserByIdCache = new MemoryKVCache<MiLocalUser>(Infinity);
-		this.uriPersonCache = new MemoryKVCache<MiUser | null>(Infinity);
+		this.userByIdCache = new MemoryKVCache<MiUser>(1000 * 60 * 5); // 5m
+		this.localUserByNativeTokenCache = new MemoryKVCache<MiLocalUser | null>(1000 * 60 * 5); // 5m
+		this.localUserByIdCache = new MemoryKVCache<MiLocalUser>(1000 * 60 * 5); // 5m
+		this.uriPersonCache = new MemoryKVCache<MiUser | null>(1000 * 60 * 5); // 5m
 
 		this.userProfileCache = new RedisKVCache<MiUserProfile>(this.redisClient, 'userProfile', {
 			lifetime: 1000 * 60 * 30, // 30m
@@ -72,7 +72,10 @@ export class CacheService implements OnApplicationShutdown {
 		this.userMutingsCache = new RedisKVCache<Set<string>>(this.redisClient, 'userMutings', {
 			lifetime: 1000 * 60 * 30, // 30m
 			memoryCacheLifetime: 1000 * 60, // 1m
-			fetcher: (key) => this.mutingsRepository.find({ where: { muterId: key }, select: ['muteeId'] }).then(xs => new Set(xs.map(x => x.muteeId))),
+			fetcher: (key) => this.mutingsRepository.find({
+				where: { muterId: key },
+				select: { muteeId: true },
+			}).then(xs => new Set(xs.map(x => x.muteeId))),
 			toRedisConverter: (value) => JSON.stringify(Array.from(value)),
 			fromRedisConverter: (value) => new Set(JSON.parse(value)),
 		});
@@ -80,7 +83,10 @@ export class CacheService implements OnApplicationShutdown {
 		this.userBlockingCache = new RedisKVCache<Set<string>>(this.redisClient, 'userBlocking', {
 			lifetime: 1000 * 60 * 30, // 30m
 			memoryCacheLifetime: 1000 * 60, // 1m
-			fetcher: (key) => this.blockingsRepository.find({ where: { blockerId: key }, select: ['blockeeId'] }).then(xs => new Set(xs.map(x => x.blockeeId))),
+			fetcher: (key) => this.blockingsRepository.find({
+				where: { blockerId: key },
+				select: { blockeeId: true },
+			}).then(xs => new Set(xs.map(x => x.blockeeId))),
 			toRedisConverter: (value) => JSON.stringify(Array.from(value)),
 			fromRedisConverter: (value) => new Set(JSON.parse(value)),
 		});
@@ -88,7 +94,10 @@ export class CacheService implements OnApplicationShutdown {
 		this.userBlockedCache = new RedisKVCache<Set<string>>(this.redisClient, 'userBlocked', {
 			lifetime: 1000 * 60 * 30, // 30m
 			memoryCacheLifetime: 1000 * 60, // 1m
-			fetcher: (key) => this.blockingsRepository.find({ where: { blockeeId: key }, select: ['blockerId'] }).then(xs => new Set(xs.map(x => x.blockerId))),
+			fetcher: (key) => this.blockingsRepository.find({
+				where: { blockeeId: key },
+				select: { blockerId: true },
+			}).then(xs => new Set(xs.map(x => x.blockerId))),
 			toRedisConverter: (value) => JSON.stringify(Array.from(value)),
 			fromRedisConverter: (value) => new Set(JSON.parse(value)),
 		});
@@ -96,7 +105,10 @@ export class CacheService implements OnApplicationShutdown {
 		this.renoteMutingsCache = new RedisKVCache<Set<string>>(this.redisClient, 'renoteMutings', {
 			lifetime: 1000 * 60 * 30, // 30m
 			memoryCacheLifetime: 1000 * 60, // 1m
-			fetcher: (key) => this.renoteMutingsRepository.find({ where: { muterId: key }, select: ['muteeId'] }).then(xs => new Set(xs.map(x => x.muteeId))),
+			fetcher: (key) => this.renoteMutingsRepository.find({
+				where: { muterId: key },
+				select: { muteeId: true },
+			}).then(xs => new Set(xs.map(x => x.muteeId))),
 			toRedisConverter: (value) => JSON.stringify(Array.from(value)),
 			fromRedisConverter: (value) => new Set(JSON.parse(value)),
 		});
@@ -104,7 +116,10 @@ export class CacheService implements OnApplicationShutdown {
 		this.userFollowingsCache = new RedisKVCache<Record<string, Pick<MiFollowing, 'withReplies'> | undefined>>(this.redisClient, 'userFollowings', {
 			lifetime: 1000 * 60 * 30, // 30m
 			memoryCacheLifetime: 1000 * 60, // 1m
-			fetcher: (key) => this.followingsRepository.find({ where: { followerId: key }, select: ['followeeId', 'withReplies'] }).then(xs => {
+			fetcher: (key) => this.followingsRepository.find({
+				where: { followerId: key },
+				select: { followeeId: true, withReplies: true },
+			}).then(xs => {
 				const obj: Record<string, Pick<MiFollowing, 'withReplies'> | undefined> = {};
 				for (const x of xs) {
 					obj[x.followeeId] = { withReplies: x.withReplies };
@@ -128,18 +143,21 @@ export class CacheService implements OnApplicationShutdown {
 			const { type, body } = obj.message as GlobalEvents['internal']['payload'];
 			switch (type) {
 				case 'userChangeSuspendedState':
-				case 'remoteUserUpdated': {
+				case 'userChangeDeletedState':
+				case 'remoteUserUpdated':
+				case 'localUserUpdated': {
 					const user = await this.usersRepository.findOneBy({ id: body.id });
 					if (user == null) {
 						this.userByIdCache.delete(body.id);
-						for (const [k, v] of this.uriPersonCache.cache.entries()) {
+						this.localUserByIdCache.delete(body.id);
+						for (const [k, v] of this.uriPersonCache.entries) {
 							if (v.value?.id === body.id) {
 								this.uriPersonCache.delete(k);
 							}
 						}
 					} else {
 						this.userByIdCache.set(user.id, user);
-						for (const [k, v] of this.uriPersonCache.cache.entries()) {
+						for (const [k, v] of this.uriPersonCache.entries) {
 							if (v.value?.id === user.id) {
 								this.uriPersonCache.set(k, user);
 							}

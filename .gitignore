@@ -23,9 +23,8 @@ packages/sw/.yarn/cache
 # pnpm
 .pnpm-store
 
-# Cypress
-cypress/screenshots
-cypress/videos
+# Playwright
+packages/frontend/test/e2e/artifacts
 
 # Coverage
 coverage
@@ -35,14 +34,18 @@ coverage
 !/.config/example.yml
 !/.config/docker_example.yml
 !/.config/docker_example.env
+!/.config/playwright-devcontainer.yml
 docker-compose.yml
-!/.devcontainer/docker-compose.yml
-Dockerfile
+/compose.yml
+.devcontainer/compose.yml
+!/.devcontainer/compose.yml
 
 # misskey
 /build
 built
 built-test
+js-built
+src-js
 /data
 /.cache-loader
 /db
@@ -60,6 +63,13 @@ ormconfig.json
 temp
 /packages/frontend/src/**/*.stories.ts
 tsdoc-metadata.json
+misskey-assets
+
+# Vite temporary files
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+vite.config.local-dev.js.timestamp-*
+vite.config.local-dev.ts.timestamp-*
 
 # blender backups
 *.blend1
@@ -70,3 +80,6 @@ tsdoc-metadata.json
 
 # VSCode addon
 .favorites.json
+
+# Affinity
+*.af~lock~

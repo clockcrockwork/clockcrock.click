@@ -6,10 +6,11 @@
 process.env.NODE_ENV = 'test';
 
 import * as assert from 'assert';
+import { describe, beforeAll, test } from 'vitest';
 import { WebSocket } from 'ws';
-import { MiFollowing } from '@/models/Following.js';
-import { api, createAppToken, initTestDb, port, post, signup, waitFire } from '../utils.js';
+import { api, connectStream, createAppToken, initTestDb, port, post, signup, waitFire } from '../utils.js';
 import type * as misskey from 'misskey-js';
+import { MiFollowing } from '@/models/Following.js';
 
 describe('Streaming', () => {
 	let Followings: any;
@@ -34,15 +35,16 @@ describe('Streaming', () => {
 		let kyoko: misskey.entities.SignupResponse;
 		let chitose: misskey.entities.SignupResponse;
 		let kanako: misskey.entities.SignupResponse;
+		let erin: misskey.entities.SignupResponse;
 
 		// Remote users
 		let akari: misskey.entities.SignupResponse;
 		let chinatsu: misskey.entities.SignupResponse;
 		let takumi: misskey.entities.SignupResponse;
 
-		let kyokoNote: any;
-		let kanakoNote: any;
-		let takumiNote: any;
+		let kyokoNote: misskey.entities.Note;
+		let kanakoNote: misskey.entities.Note;
+		let takumiNote: misskey.entities.Note;
 		let list: any;
 
 		beforeAll(async () => {
@@ -53,6 +55,7 @@ describe('Streaming', () => {
 			kyoko = await signup({ username: 'kyoko' });
 			chitose = await signup({ username: 'chitose' });
 			kanako = await signup({ username: 'kanako' });
+			erin = await signup({ username: 'erin' }); // erin:  A generic fifth participant
 
 			akari = await signup({ username: 'akari', host: 'example.com' });
 			chinatsu = await signup({ username: 'chinatsu', host: 'example.com' });
@@ -63,10 +66,19 @@ describe('Streaming', () => {
 			takumiNote = await post(takumi, { text: 'piyo' });
 
 			// Follow: ayano => kyoko
-			await api('following/create', { userId: kyoko.id }, ayano);
+			await api('following/create', { userId: kyoko.id, withReplies: false }, ayano);
 
 			// Follow: ayano => akari
 			await follow(ayano, akari);
+
+			// Follow: kyoko => chitose
+			await api('following/create', { userId: chitose.id }, kyoko);
+
+			// Follow: erin <=> ayano each other.
+			// erin => ayano: withReplies: true
+			await api('following/create', { userId: ayano.id, withReplies: true }, erin);
+			// ayano => erin: withReplies: false
+			await api('following/create', { userId: erin.id, withReplies: false }, ayano);
 
 			// Mute: chitose => kanako
 			await api('mute/create', { userId: kanako.id }, chitose);
@@ -155,22 +167,41 @@ describe('Streaming', () => {
 				assert.strictEqual(fired, true);
 			});
 
-			/* なんか失敗する
 			test('フォローしているユーザーの visibility: followers な投稿への返信が流れる', async () => {
-				const note = await api('notes/create', { text: 'foo', visibility: 'followers' }, kyoko);
+				const note = await post(kyoko, { text: 'foo', visibility: 'followers' });
 
 				const fired = await waitFire(
 					ayano, 'homeTimeline',		// ayano:home
-					() => api('notes/create', { text: 'bar', visibility: 'followers', replyId: note.body.id }, kyoko),	// kyoko posts
-					msg => msg.type === 'note' && msg.body.userId === kyoko.id && msg.body.reply.text === 'foo',
+					() => api('notes/create', { text: 'bar', visibility: 'followers', replyId: note.id }, kyoko),	// kyoko posts
+					msg => msg.type === 'note' && msg.body.userId === kyoko.id && msg.body.replyId === note.id,
 				);
 
 				assert.strictEqual(fired, true);
 			});
-			*/
 
 			test('フォローしているユーザーのフォローしていないユーザーの visibility: followers な投稿への返信が流れない', async () => {
-				// TODO
+				const chitoseNote = await post(chitose, { text: 'followers-only post', visibility: 'followers' });
+
+				const fired = await waitFire(
+					ayano, 'homeTimeline',	// ayano:home
+					() => api('notes/create', { text: 'reply to chitose\'s followers-only post', replyId: chitoseNote.id }, kyoko),	// kyoko's reply to chitose's followers-only post
+					msg => msg.type === 'note' && msg.body.userId === kyoko.id,	// wait kyoko
+				);
+
+				assert.strictEqual(fired, false);
+			});
+
+			test('フォローしているユーザーのフォローしていないユーザーの visibility: followers な投稿への返信のリノートが流れない', async () => {
+				const chitoseNote = await post(chitose, { text: 'followers-only post', visibility: 'followers' });
+				const kyokoReply = await post(kyoko, { text: 'reply to followers-only post', replyId: chitoseNote.id });
+
+				const fired = await waitFire(
+					ayano, 'homeTimeline',	// ayano:home
+					() => api('notes/create', { renoteId: kyokoReply.id }, kyoko),	// kyoko's renote of kyoko's reply to chitose's followers-only post
+					msg => msg.type === 'note' && msg.body.userId === kyoko.id,	// wait kyoko
+				);
+
+				assert.strictEqual(fired, false);
 			});
 
 			test('フォローしていないユーザーの投稿は流れない', async () => {
@@ -201,6 +232,101 @@ describe('Streaming', () => {
 				);
 
 				assert.strictEqual(fired, false);
+			});
+
+			/**
+			 * TODO: 落ちる
+			 * @see https://github.com/misskey-dev/misskey/issues/13474
+			test('visibility: specified なノートで visibleUserIds に自分が含まれているときそのノートへのリプライが流れてくる', async () => {
+				const chitoseToKyokoAndAyano = await post(chitose, { text: 'direct note from chitose to kyoko and ayano', visibility: 'specified', visibleUserIds: [kyoko.id, ayano.id] });
+
+				const fired = await waitFire(
+					ayano, 'homeTimeline',	// ayano:home
+					() => api('notes/create', { text: 'direct reply from kyoko to chitose and ayano', replyId: chitoseToKyokoAndAyano.id, visibility: 'specified', visibleUserIds: [chitose.id, ayano.id] }, kyoko),
+					msg => msg.type === 'note' && msg.body.userId === kyoko.id,
+				);
+
+				assert.strictEqual(fired, true);
+			});
+			 */
+
+			test('visibility: specified な投稿に対するリプライで visibleUserIds が拡張されたとき、その拡張されたユーザーの HTL にはそのリプライが流れない', async () => {
+				const chitoseToKyoko = await post(chitose, { text: 'direct note from chitose to kyoko', visibility: 'specified', visibleUserIds: [kyoko.id] });
+
+				const fired = await waitFire(
+					ayano, 'homeTimeline',	// ayano:home
+					() => api('notes/create', { text: 'direct reply from kyoko to chitose and ayano', replyId: chitoseToKyoko.id, visibility: 'specified', visibleUserIds: [chitose.id, ayano.id] }, kyoko),
+					msg => msg.type === 'note' && msg.body.userId === kyoko.id,
+				);
+
+				assert.strictEqual(fired, false);
+			});
+
+			test('visibility: specified な投稿に対するリプライで visibleUserIds が収縮されたとき、その収縮されたユーザーの HTL にはそのリプライが流れない', async () => {
+				const chitoseToKyokoAndAyano = await post(chitose, { text: 'direct note from chitose to kyoko and ayano', visibility: 'specified', visibleUserIds: [kyoko.id, ayano.id] });
+
+				const fired = await waitFire(
+					ayano, 'homeTimeline',	// ayano:home
+					() => api('notes/create', { text: 'direct reply from kyoko to chitose', replyId: chitoseToKyokoAndAyano.id, visibility: 'specified', visibleUserIds: [chitose.id] }, kyoko),
+					msg => msg.type === 'note' && msg.body.userId === kyoko.id,
+				);
+
+				assert.strictEqual(fired, false);
+			});
+
+			test('withRenotes: false のときリノートが流れない', async () => {
+				const fired = await waitFire(
+					ayano, 'homeTimeline',	// ayano:home
+					() => api('notes/create', { renoteId: kyokoNote.id }, kyoko),	// kyoko renote
+					msg => msg.type === 'note' && msg.body.userId === kyoko.id,	// wait kyoko
+					{ withRenotes: false },
+				);
+
+				assert.strictEqual(fired, false);
+			});
+
+			test('withRenotes: false のとき引用リノートが流れる', async () => {
+				const fired = await waitFire(
+					ayano, 'homeTimeline',	// ayano:home
+					() => api('notes/create', { text: 'quote', renoteId: kyokoNote.id }, kyoko),	// kyoko quote
+					msg => msg.type === 'note' && msg.body.userId === kyoko.id,	// wait kyoko
+					{ withRenotes: false },
+				);
+
+				assert.strictEqual(fired, true);
+			});
+
+			test('withRenotes: false のとき投票のみのリノートが流れる', async () => {
+				const fired = await waitFire(
+					ayano, 'homeTimeline',	// ayano:home
+					() => api('notes/create', { poll: { choices: ['kinoko', 'takenoko'] }, renoteId: kyokoNote.id }, kyoko),	// kyoko renote with poll
+					msg => msg.type === 'note' && msg.body.userId === kyoko.id,	// wait kyoko
+					{ withRenotes: false },
+				);
+
+				assert.strictEqual(fired, true);
+			});
+
+			test('withReplies: true のとき自分のfollowers投稿に対するリプライが流れる', async () => {
+				const erinNote = await post(erin, { text: 'hi', visibility: 'followers' });
+				const fired = await waitFire(
+					erin, 'homeTimeline',	// erin:home
+					() => api('notes/create', { text: 'hello', replyId: erinNote.id }, ayano),	// ayano reply to erin's followers post
+					msg => msg.type === 'note' && msg.body.userId === ayano.id,	// wait ayano
+				);
+
+				assert.strictEqual(fired, true);
+			});
+
+			test('withReplies: false でも自分の投稿に対するリプライが流れる', async () => {
+				const ayanoNote = await post(ayano, { text: 'hi', visibility: 'followers' });
+				const fired = await waitFire(
+					ayano, 'homeTimeline',	// ayano:home
+					() => api('notes/create', { text: 'hello', replyId: ayanoNote.id }, erin),	// erin reply to ayano's followers post
+					msg => msg.type === 'note' && msg.body.userId === erin.id,	// wait erin
+				);
+
+				assert.strictEqual(fired, true);
 			});
 		});	// Home
 
@@ -380,6 +506,41 @@ describe('Streaming', () => {
 
 				assert.strictEqual(fired, false);
 			});
+
+			test('withReplies: true のとき自分のfollowers投稿に対するリプライが流れる', async () => {
+				const erinNote = await post(erin, { text: 'hi', visibility: 'followers' });
+				const fired = await waitFire(
+					erin, 'hybridTimeline',	// erin:Hybrid
+					() => api('notes/create', { text: 'hello', replyId: erinNote.id }, ayano),	// ayano reply to erin's followers post
+					msg => msg.type === 'note' && msg.body.userId === ayano.id,	// wait ayano
+				);
+
+				assert.strictEqual(fired, true);
+			});
+
+			test('withReplies: false でも自分の投稿に対するリプライが流れる', async () => {
+				const ayanoNote = await post(ayano, { text: 'hi', visibility: 'followers' });
+				const fired = await waitFire(
+					ayano, 'hybridTimeline',	// ayano:Hybrid
+					() => api('notes/create', { text: 'hello', replyId: ayanoNote.id }, erin),	// erin reply to ayano's followers post
+					msg => msg.type === 'note' && msg.body.userId === erin.id,	// wait erin
+				);
+
+				assert.strictEqual(fired, true);
+			});
+
+			test('withReplies: true のフォローしていない人のfollowersノートに対するリプライが流れない', async () => {
+				// ayano は kyoko をフォローしているため kyoko の followers 投稿にリプライできるが、
+				// erin は kyoko をフォローしていないため、そのリプライは erin の Hybrid Timeline には流れないはず
+				const kyokoFollowersNote = await post(kyoko, { text: 'hi', visibility: 'followers' });
+				const fired = await waitFire(
+					erin, 'hybridTimeline',	// erin:Hybrid
+					() => api('notes/create', { text: 'hello', replyId: kyokoFollowersNote.id }, ayano),	// ayano reply to kyoko's followers post
+					msg => msg.type === 'note' && msg.body.userId === ayano.id,	// wait ayano
+				);
+
+				assert.strictEqual(fired, false);
+			});
 		});
 
 		describe('Global Timeline', () => {
@@ -413,6 +574,16 @@ describe('Streaming', () => {
 				);
 
 				assert.strictEqual(fired, false);
+			});
+
+			test('withReplies = falseでフォローしてる人によるリプライが流れてくる', async () => {
+				const fired = await waitFire(
+					ayano, 'globalTimeline',		// ayano:Global
+					() => api('notes/create', { text: 'foo', replyId: kanakoNote.id }, kyoko),	// kyoko posts
+					msg => msg.type === 'note' && msg.body.userId === kyoko.id,	// wait kyoko
+				);
+
+				assert.strictEqual(fired, true);
 			});
 		});
 
@@ -504,7 +675,7 @@ describe('Streaming', () => {
 
 			// #10443
 			test('ミュートしているサーバのノートがリストTLに流れない', async () => {
-				await api('/i/update', {
+				await api('i/update', {
 					mutedInstances: ['example.com'],
 				}, chitose);
 
@@ -512,7 +683,7 @@ describe('Streaming', () => {
 				const fired = await waitFire(
 					chitose, 'userList',
 					() => api('notes/create', { text: 'foo' }, takumi),
-					msg => msg.type === 'note' && msg.body.userId === kyoko.id,
+					msg => msg.type === 'note' && msg.body.userId === takumi.id,
 					{ listId: list.id },
 				);
 
@@ -521,7 +692,7 @@ describe('Streaming', () => {
 
 			// #10443
 			test('ミュートしているサーバのノートに対するリプライがリストTLに流れない', async () => {
-				await api('/i/update', {
+				await api('i/update', {
 					mutedInstances: ['example.com'],
 				}, chitose);
 
@@ -538,7 +709,7 @@ describe('Streaming', () => {
 
 			// #10443
 			test('ミュートしているサーバのノートに対するリノートがリストTLに流れない', async () => {
-				await api('/i/update', {
+				await api('i/update', {
 					mutedInstances: ['example.com'],
 				}, chitose);
 
@@ -576,164 +747,83 @@ describe('Streaming', () => {
 			assert.strictEqual(fired, true);
 		});
 
-		// XXX: QueryFailedError: duplicate key value violates unique constraint "IDX_347fec870eafea7b26c8a73bac"
-		/*
 		describe('Hashtag Timeline', () => {
-			test('指定したハッシュタグの投稿が流れる', () => new Promise<void>(async done => {
-				const ws = await connectStream(chitose, 'hashtag', ({ type, body }) => {
-					if (type === 'note') {
-						assert.deepStrictEqual(body.text, '#foo');
-						ws.close();
-						done();
-					}
-				}, {
-					q: [
-						['foo'],
-					],
-				});
+			test('指定したハッシュタグの投稿が流れる', async () => {
+				const fired = await waitFire(
+					chitose, 'hashtag',
+					() => api('notes/create', { text: '#foo' }, chitose),
+					msg => msg.type === 'note' && msg.body.text === '#foo',
+					{ q: [['foo']] },
+				);
 
-				post(chitose, {
-					text: '#foo',
-				});
-			}));
+				assert.strictEqual(fired, true);
+			});
 
-			test('指定したハッシュタグの投稿が流れる (AND)', () => new Promise<void>(async done => {
-				let fooCount = 0;
-				let barCount = 0;
-				let fooBarCount = 0;
+			test('指定したハッシュタグの投稿が流れる (AND)', async () => {
+				const received: string[] = [];
+				const ws = await connectStream(chitose, 'hashtag', (msg) => {
+					if (msg.type === 'note') received.push(msg.body.text);
+				}, { q: [['foo', 'bar']] });
 
-				const ws = await connectStream(chitose, 'hashtag', ({ type, body }) => {
-					if (type === 'note') {
-						if (body.text === '#foo') fooCount++;
-						if (body.text === '#bar') barCount++;
-						if (body.text === '#foo #bar') fooBarCount++;
-					}
-				}, {
-					q: [
-						['foo', 'bar'],
-					],
-				});
+				await Promise.all([
+					await api('notes/create', { text: '#foo' }, chitose),
+					await api('notes/create', { text: '#bar' }, chitose),
+					await api('notes/create', { text: '#foo #bar' }, chitose),
+				]);
 
-				post(chitose, {
-					text: '#foo',
-				});
+				await new Promise(r => setTimeout(r, 1000));
+				ws.close();
 
-				post(chitose, {
-					text: '#bar',
-				});
+				assert.strictEqual(received.includes('#foo'), false);
+				assert.strictEqual(received.includes('#bar'), false);
+				assert.strictEqual(received.includes('#foo #bar'), true);
+			});
 
-				post(chitose, {
-					text: '#foo #bar',
-				});
+			test('指定したハッシュタグの投稿が流れる (OR)', async () => {
+				const received: string[] = [];
+				const ws = await connectStream(chitose, 'hashtag', (msg) => {
+					if (msg.type === 'note') received.push(msg.body.text);
+				}, { q: [['foo'], ['bar']] });
 
-				setTimeout(() => {
-					assert.strictEqual(fooCount, 0);
-					assert.strictEqual(barCount, 0);
-					assert.strictEqual(fooBarCount, 1);
-					ws.close();
-					done();
-				}, 3000);
-			}));
+				await Promise.all([
+					await api('notes/create', { text: '#foo' }, chitose),
+					await api('notes/create', { text: '#bar' }, chitose),
+					await api('notes/create', { text: '#foo #bar' }, chitose),
+					await api('notes/create', { text: '#piyo' }, chitose),
+				]);
 
-			test('指定したハッシュタグの投稿が流れる (OR)', () => new Promise<void>(async done => {
-				let fooCount = 0;
-				let barCount = 0;
-				let fooBarCount = 0;
-				let piyoCount = 0;
+				await new Promise(r => setTimeout(r, 1000));
+				ws.close();
 
-				const ws = await connectStream(chitose, 'hashtag', ({ type, body }) => {
-					if (type === 'note') {
-						if (body.text === '#foo') fooCount++;
-						if (body.text === '#bar') barCount++;
-						if (body.text === '#foo #bar') fooBarCount++;
-						if (body.text === '#piyo') piyoCount++;
-					}
-				}, {
-					q: [
-						['foo'],
-						['bar'],
-					],
-				});
+				assert.strictEqual(received.includes('#foo'), true);
+				assert.strictEqual(received.includes('#bar'), true);
+				assert.strictEqual(received.includes('#foo #bar'), true);
+				assert.strictEqual(received.includes('#piyo'), false);
+			});
 
-				post(chitose, {
-					text: '#foo',
-				});
+			test('指定したハッシュタグの投稿が流れる (AND + OR)', async () => {
+				const received: string[] = [];
+				const ws = await connectStream(chitose, 'hashtag', (msg) => {
+					if (msg.type === 'note') received.push(msg.body.text);
+				}, { q: [['foo', 'bar'], ['piyo']] });
 
-				post(chitose, {
-					text: '#bar',
-				});
+				await Promise.all([
+					api('notes/create', { text: '#foo' }, chitose),
+					api('notes/create', { text: '#bar' }, chitose),
+					api('notes/create', { text: '#foo #bar' }, chitose),
+					api('notes/create', { text: '#piyo' }, chitose),
+					api('notes/create', { text: '#waaa' }, chitose),
+				]);
 
-				post(chitose, {
-					text: '#foo #bar',
-				});
+				await new Promise(r => setTimeout(r, 1000));
+				ws.close();
 
-				post(chitose, {
-					text: '#piyo',
-				});
-
-				setTimeout(() => {
-					assert.strictEqual(fooCount, 1);
-					assert.strictEqual(barCount, 1);
-					assert.strictEqual(fooBarCount, 1);
-					assert.strictEqual(piyoCount, 0);
-					ws.close();
-					done();
-				}, 3000);
-			}));
-
-			test('指定したハッシュタグの投稿が流れる (AND + OR)', () => new Promise<void>(async done => {
-				let fooCount = 0;
-				let barCount = 0;
-				let fooBarCount = 0;
-				let piyoCount = 0;
-				let waaaCount = 0;
-
-				const ws = await connectStream(chitose, 'hashtag', ({ type, body }) => {
-					if (type === 'note') {
-						if (body.text === '#foo') fooCount++;
-						if (body.text === '#bar') barCount++;
-						if (body.text === '#foo #bar') fooBarCount++;
-						if (body.text === '#piyo') piyoCount++;
-						if (body.text === '#waaa') waaaCount++;
-					}
-				}, {
-					q: [
-						['foo', 'bar'],
-						['piyo'],
-					],
-				});
-
-				post(chitose, {
-					text: '#foo',
-				});
-
-				post(chitose, {
-					text: '#bar',
-				});
-
-				post(chitose, {
-					text: '#foo #bar',
-				});
-
-				post(chitose, {
-					text: '#piyo',
-				});
-
-				post(chitose, {
-					text: '#waaa',
-				});
-
-				setTimeout(() => {
-					assert.strictEqual(fooCount, 0);
-					assert.strictEqual(barCount, 0);
-					assert.strictEqual(fooBarCount, 1);
-					assert.strictEqual(piyoCount, 1);
-					assert.strictEqual(waaaCount, 0);
-					ws.close();
-					done();
-				}, 3000);
-			}));
+				assert.strictEqual(received.includes('#foo'), false);
+				assert.strictEqual(received.includes('#bar'), false);
+				assert.strictEqual(received.includes('#foo #bar'), true);
+				assert.strictEqual(received.includes('#piyo'), true);
+				assert.strictEqual(received.includes('#waaa'), false);
+			});
 		});
-		*/
 	});
 });

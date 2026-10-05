@@ -5,8 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 <template>
 <div :class="$style.root">
-	<MkMediaAudio v-if="media.type.startsWith('audio') && media.type !== 'audio/midi'" :audio="media"/>
-	<div v-else-if="media.isSensitive && hide" :class="$style.sensitive" @click="hide = false">
+	<div v-if="hide" :class="$style.sensitive" @click="reveal">
 		<span style="font-size: 1.6em;"><i class="ti ti-alert-triangle"></i></span>
 		<b>{{ i18n.ts.sensitive }}</b>
 		<span>{{ i18n.ts.clickToShow }}</span>
@@ -24,24 +23,24 @@ SPDX-License-Identifier: AGPL-3.0-only
 </template>
 
 <script lang="ts" setup>
-import { shallowRef, watch, ref } from 'vue';
+import { ref } from 'vue';
 import * as Misskey from 'misskey-js';
 import { i18n } from '@/i18n.js';
-import MkMediaAudio from '@/components/MkMediaAudio.vue';
+import { shouldHideFileByDefault, canRevealFile } from '@/utility/sensitive-file.js';
 
-const props = withDefaults(defineProps<{
+const props = defineProps<{
 	media: Misskey.entities.DriveFile;
-}>(), {
-});
+}>();
 
-const audioEl = shallowRef<HTMLAudioElement>();
-const hide = ref(true);
+const hide = ref(shouldHideFileByDefault(props.media));
 
-watch(audioEl, () => {
-	if (audioEl.value) {
-		audioEl.value.volume = 0.3;
+async function reveal() {
+	if (!(await canRevealFile(props.media))) {
+		return;
 	}
-});
+
+	hide.value = false;
+}
 </script>
 
 <style lang="scss" module>
@@ -62,7 +61,6 @@ watch(audioEl, () => {
 }
 
 .download {
-	background: var(--noteAttachedFile);
 }
 
 .sensitive {

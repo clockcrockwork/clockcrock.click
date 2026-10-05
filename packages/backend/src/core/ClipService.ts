@@ -41,17 +41,17 @@ export class ClipService {
 		const currentCount = await this.clipsRepository.countBy({
 			userId: me.id,
 		});
-		if (currentCount > (await this.roleService.getUserPolicies(me.id)).clipLimit) {
+		if (currentCount >= (await this.roleService.getUserPolicies(me.id)).clipLimit) {
 			throw new ClipService.TooManyClipsError();
 		}
 
-		const clip = await this.clipsRepository.insert({
+		const clip = await this.clipsRepository.insertOne({
 			id: this.idService.gen(),
 			userId: me.id,
 			name: name,
 			isPublic: isPublic,
 			description: description,
-		}).then(x => this.clipsRepository.findOneByOrFail(x.identifiers[0]));
+		});
 
 		return clip;
 	}
@@ -102,7 +102,7 @@ export class ClipService {
 		const currentCount = await this.clipNotesRepository.countBy({
 			clipId: clip.id,
 		});
-		if (currentCount > (await this.roleService.getUserPolicies(me.id)).noteEachClipsLimit) {
+		if (currentCount >= (await this.roleService.getUserPolicies(me.id)).noteEachClipsLimit) {
 			throw new ClipService.TooManyClipNotesError();
 		}
 
@@ -142,16 +142,14 @@ export class ClipService {
 			throw new ClipService.NoSuchClipError();
 		}
 
-		const note = await this.notesRepository.findOneBy({ id: noteId });
-
-		if (note == null) {
-			throw new ClipService.NoSuchNoteError();
-		}
-
-		await this.clipNotesRepository.delete({
+		const result = await this.clipNotesRepository.delete({
 			noteId: noteId,
 			clipId: clip.id,
 		});
+
+		if (result.affected === 0) {
+			throw new ClipService.NoSuchNoteError();
+		}
 
 		this.notesRepository.decrement({ id: noteId }, 'clippedCount', 1);
 	}

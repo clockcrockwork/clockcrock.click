@@ -6,7 +6,8 @@
 process.env.NODE_ENV = 'test';
 
 import * as assert from 'assert';
-import { IncomingMessage } from 'http';
+import { describe, beforeAll, test } from 'vitest';
+import { IncomingMessage } from 'node:http';
 import {
 	api,
 	connectStream,
@@ -23,32 +24,32 @@ import type * as misskey from 'misskey-js';
 describe('API', () => {
 	let alice: misskey.entities.SignupResponse;
 	let bob: misskey.entities.SignupResponse;
-	let carol: misskey.entities.SignupResponse;
 
 	beforeAll(async () => {
 		alice = await signup({ username: 'alice' });
 		bob = await signup({ username: 'bob' });
-		carol = await signup({ username: 'carol' });
 	}, 1000 * 60 * 2);
 
 	describe('General validation', () => {
 		test('wrong type', async () => {
-			const res = await api('/test', {
+			const res = await api('test', {
 				required: true,
+				// @ts-expect-error string must be string
 				string: 42,
 			});
 			assert.strictEqual(res.status, 400);
 		});
 
 		test('missing require param', async () => {
-			const res = await api('/test', {
+			// @ts-expect-error required is required
+			const res = await api('test', {
 				string: 'a',
 			});
 			assert.strictEqual(res.status, 400);
 		});
 
 		test('invalid misskey:id (empty string)', async () => {
-			const res = await api('/test', {
+			const res = await api('test', {
 				required: true,
 				id: '',
 			});
@@ -56,7 +57,7 @@ describe('API', () => {
 		});
 
 		test('valid misskey:id', async () => {
-			const res = await api('/test', {
+			const res = await api('test', {
 				required: true,
 				id: '8wvhjghbxu',
 			});
@@ -64,7 +65,7 @@ describe('API', () => {
 		});
 
 		test('default value', async () => {
-			const res = await api('/test', {
+			const res = await api('test', {
 				required: true,
 				string: 'a',
 			});
@@ -73,7 +74,7 @@ describe('API', () => {
 		});
 
 		test('can set null even if it has default value', async () => {
-			const res = await api('/test', {
+			const res = await api('test', {
 				required: true,
 				nullableDefault: null,
 			});
@@ -82,7 +83,7 @@ describe('API', () => {
 		});
 
 		test('cannot set undefined if it has default value', async () => {
-			const res = await api('/test', {
+			const res = await api('test', {
 				required: true,
 				nullableDefault: undefined,
 			});
@@ -99,14 +100,14 @@ describe('API', () => {
 
 		// aliceは管理者、APIを使える
 		await successfulApiCall({
-			endpoint: '/admin/get-index-stats',
+			endpoint: 'admin/get-index-stats',
 			parameters: {},
 			user: alice,
 		});
 
 		// bobは一般ユーザーだからダメ
 		await failedApiCall({
-			endpoint: '/admin/get-index-stats',
+			endpoint: 'admin/get-index-stats',
 			parameters: {},
 			user: bob,
 		}, {
@@ -117,7 +118,7 @@ describe('API', () => {
 
 		// publicアクセスももちろんダメ
 		await failedApiCall({
-			endpoint: '/admin/get-index-stats',
+			endpoint: 'admin/get-index-stats',
 			parameters: {},
 			user: undefined,
 		}, {
@@ -128,7 +129,7 @@ describe('API', () => {
 
 		// ごまがしもダメ
 		await failedApiCall({
-			endpoint: '/admin/get-index-stats',
+			endpoint: 'admin/get-index-stats',
 			parameters: {},
 			user: { token: 'tsukawasete' },
 		}, {
@@ -138,13 +139,13 @@ describe('API', () => {
 		});
 
 		await successfulApiCall({
-			endpoint: '/admin/get-index-stats',
+			endpoint: 'admin/get-index-stats',
 			parameters: {},
 			user: { token: application2 },
 		});
 
 		await failedApiCall({
-			endpoint: '/admin/get-index-stats',
+			endpoint: 'admin/get-index-stats',
 			parameters: {},
 			user: { token: application },
 		}, {
@@ -154,7 +155,7 @@ describe('API', () => {
 		});
 
 		await failedApiCall({
-			endpoint: '/admin/get-index-stats',
+			endpoint: 'admin/get-index-stats',
 			parameters: {},
 			user: { token: application3 },
 		}, {
@@ -164,7 +165,7 @@ describe('API', () => {
 		});
 
 		await failedApiCall({
-			endpoint: '/admin/get-index-stats',
+			endpoint: 'admin/get-index-stats',
 			parameters: {},
 			user: { token: application4 },
 		}, {
@@ -177,7 +178,7 @@ describe('API', () => {
 	describe('Authentication header', () => {
 		test('一般リクエスト', async () => {
 			await successfulApiCall({
-				endpoint: '/admin/get-index-stats',
+				endpoint: 'admin/get-index-stats',
 				parameters: {},
 				user: {
 					token: alice.token,
@@ -211,7 +212,7 @@ describe('API', () => {
 	describe('tokenエラー応答でWWW-Authenticate headerを送る', () => {
 		describe('invalid_token', () => {
 			test('一般リクエスト', async () => {
-				const result = await api('/admin/get-index-stats', {}, {
+				const result = await api('admin/get-index-stats', {}, {
 					token: 'syuilo',
 					bearer: true,
 				});
@@ -246,7 +247,7 @@ describe('API', () => {
 
 		describe('tokenがないとrealmだけおくる', () => {
 			test('一般リクエスト', async () => {
-				const result = await api('/admin/get-index-stats', {});
+				const result = await api('admin/get-index-stats', {});
 				assert.strictEqual(result.status, 401);
 				assert.strictEqual(result.headers.get('WWW-Authenticate'), 'Bearer realm="Misskey"');
 			});
@@ -259,7 +260,8 @@ describe('API', () => {
 		});
 
 		test('invalid_request', async () => {
-			const result = await api('/notes/create', { text: true }, {
+			// @ts-expect-error text must be string
+			const result = await api('notes/create', { text: true }, {
 				token: alice.token,
 				bearer: true,
 			});
